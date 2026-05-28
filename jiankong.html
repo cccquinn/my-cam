@@ -3,65 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>监控发射端 (Mate 20)</title>
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <title>极速监控发射端</title>
+    <script src="https://cdn.bootcdn.net/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
-        #video { width: 100%; max-width: 400px; border-radius: 8px; border: 2px solid #00ff88; transform: scaleX(-1); }
-        .peer-id { font-size: 24px; color: #00ff88; font-weight: bold; margin: 20px 0; background: #222; padding: 10px; border-radius: 5px; display: inline-block; }
-        .status { color: #aaa; }
+        .box { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 400px; margin: 20px auto; }
+        input { padding: 10px; width: 80%; margin: 10px 0; border-radius: 4px; border: 1px solid #333; background: #2b2b2b; color: #fff; text-align: center; font-size: 16px; }
+        button { padding: 12px 24px; background: #00ff88; color: #000; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold; width: 85%; }
+        #video { width: 100%; max-width: 400px; border-radius: 8px; margin-top: 15px; background: #000; display: none; }
+        .status { color: #ffbc00; font-weight: bold; margin-top: 10px; }
     </style>
 </head>
 <body>
-    <h1>📱 监控发射端</h1>
-    <p class="status">正在获取摄像头权限...</p>
-    <video id="video" autoplay playsinline muted></video>
+    <h1>📱 纯外网监控发射端</h1>
     
-    <div>
-        <p>请复制下方连接 ID，填入接收端网页中：</p>
-        <div id="peer-id" class="peer-id">正在生成 ID...</div>
+    <div class="box">
+        <input type="text" id="room-id" value="mycam888" placeholder="自定义监控暗号/房间名">
+        <button id="start-btn">一键开启云端监控</button>
+        <div id="status" class="status">点击上方按钮启动</div>
     </div>
 
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+
     <script>
-        const videoElement = document.getElementById('video');
-        const idDisplay = document.getElementById('peer-id');
-        let localStream;
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const startBtn = document.getElementById('start-btn');
+        
+        let client;
+        let publishTimer;
 
-        // 1. 调用华为 Mate 20 的后置摄像头
-        navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: "environment" }, width: 1280, height: 720 },
-            audio: false // 监控通常不需要声音，关闭可省流量
-        })
-        .then(stream => {
-            localStream = stream;
-            videoElement.srcObject = stream;
-            document.querySelector('.status').innerText = "🟢 摄像头就绪，等待连接...";
-            
-            // 2. 初始化 P2P 连接
-            initPeer();
-        })
-        .catch(err => {
-            alert("无法获取摄像头，请确保使用 HTTPS 环境或本地访问！错误: " + err);
-        });
+        startBtn.onclick = async () => {
+            const topicName = document.getElementById('room-id').value.trim();
+            if(!topicName) return alert("请输入监控暗号！");
 
-        function initPeer() {
-            // 创建一个 Peer 对象（使用公共免费云服务器建立信令）
-            const peer = new Peer();
+            statusDiv.innerText = "正在连接云端高速通道...";
+            startBtn.style.display = "none";
 
-            peer.on('open', (id) => {
-                idDisplay.innerText = id; // 显示这一台手机的专属公网ID
-            });
+            // 连接公共免费的 MQTT 服务器（国内连接非常顺畅）
+            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
 
-            // 当接收端（你的随身手机）打过来连接时
-            peer.on('call', (call) => {
-                // 回应连接，并将 Mate 20 的视频流发送过去
-                call.answer(localStream);
-                document.querySelector('.status').innerText = "🔵 正在向云端传输画面...";
+            client.on('connect', async () => {
+                statusDiv.innerText = "云端通道已建立，正在启动摄像头...";
                 
-                call.on('close', () => {
-                    document.querySelector('.status').innerText = "🟢 连线已断开，等待下次连接...";
-                });
+                try {
+                    // 唤醒摄像头
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: { ideal: "environment" }, width: 480, height: 360 }, // 480P 保证外网流畅度
+                        audio: false
+                    });
+                    video.srcObject = stream;
+                    video.style.display = "inline-block";
+
+                    statusDiv.innerHTML = `🟢 监控已成功上云！<br>暗号：<span style="color:#00ff88">${topicName}</span>`;
+
+                    // 开始循环向外网发送画面
+                    startStreaming(topicName);
+
+                } catch (err) {
+                    statusDiv.innerText = "❌ 摄像头开启失败，请务必使用 HTTPS 网址打开！";
+                }
             });
+
+            client.on('error', () => { statusDiv.innerText = "❌ 云端服务器连接失败，请重试"; });
+        };
+
+        function startStreaming(topic) {
+            // 每秒捕获 12 帧画面（既保证画面连贯，又不容易卡顿）
+            publishTimer = setInterval(() => {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    // 将画面压缩为 JPG 格式，0.5 代表中等画质（平衡流量与清晰度）
+                    const base64Data = canvas.toDataURL('image/jpeg', 0.5);
+                    
+                    // 通过云端通道广播出去
+                    client.publish('pocam/' + topic, base64Data, { qos: 0 });
+                }
+            }, 85); 
         }
     </script>
 </body>
