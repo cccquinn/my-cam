@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>监控发射端 (Mate 20)</title>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
+        #video { width: 100%; max-width: 400px; border-radius: 8px; border: 2px solid #00ff88; transform: scaleX(-1); }
+        .peer-id { font-size: 24px; color: #00ff88; font-weight: bold; margin: 20px 0; background: #222; padding: 10px; border-radius: 5px; display: inline-block; }
+        .status { color: #aaa; }
+    </style>
+</head>
+<body>
+    <h1>📱 监控发射端</h1>
+    <p class="status">正在获取摄像头权限...</p>
+    <video id="video" autoplay playsinline muted></video>
+    
+    <div>
+        <p>请复制下方连接 ID，填入接收端网页中：</p>
+        <div id="peer-id" class="peer-id">正在生成 ID...</div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('video');
+        const idDisplay = document.getElementById('peer-id');
+        let localStream;
+
+        // 1. 调用华为 Mate 20 的后置摄像头
+        navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: "environment" }, width: 1280, height: 720 },
+            audio: false // 监控通常不需要声音，关闭可省流量
+        })
+        .then(stream => {
+            localStream = stream;
+            videoElement.srcObject = stream;
+            document.querySelector('.status').innerText = "🟢 摄像头就绪，等待连接...";
+            
+            // 2. 初始化 P2P 连接
+            initPeer();
+        })
+        .catch(err => {
+            alert("无法获取摄像头，请确保使用 HTTPS 环境或本地访问！错误: " + err);
+        });
+
+        function initPeer() {
+            // 创建一个 Peer 对象（使用公共免费云服务器建立信令）
+            const peer = new Peer();
+
+            peer.on('open', (id) => {
+                idDisplay.innerText = id; // 显示这一台手机的专属公网ID
+            });
+
+            // 当接收端（你的随身手机）打过来连接时
+            peer.on('call', (call) => {
+                // 回应连接，并将 Mate 20 的视频流发送过去
+                call.answer(localStream);
+                document.querySelector('.status').innerText = "🔵 正在向云端传输画面...";
+                
+                call.on('close', () => {
+                    document.querySelector('.status').innerText = "🟢 连线已断开，等待下次连接...";
+                });
+            });
+        }
+    </script>
+</body>
+</html>
