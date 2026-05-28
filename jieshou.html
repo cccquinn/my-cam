@@ -3,56 +3,72 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>云端监控接收端</title>
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <title>云端监控查看中心</title>
+    <script src="https://cdn.bootcdn.net/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 20px; }
-        #remote-video { width: 100%; max-width: 640px; border: 4px solid #333; border-radius: 8px; background: #000; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        input { padding: 10px; width: 200px; border-radius: 4px; border: none; font-size: 16px; text-align: center;}
-        button { padding: 10px 20px; background: #00ff88; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold;}
-        .control-panel { margin-bottom: 20px; }
+        body { font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 20px; margin: 0; }
+        .box { background: #252525; padding: 15px; border-radius: 8px; max-width: 400px; margin: 0 auto 20px auto; }
+        input { padding: 10px; width: 80%; margin: 10px 0; border-radius: 4px; border: none; font-size: 16px; text-align: center; }
+        button { padding: 12px 24px; background: #00ff88; color: #000; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold; width: 85%; }
+        .monitor-box { width: 100%; max-width: 500px; margin: 0 auto; border: 4px solid #333; border-radius: 12px; background: #000; min-height: 300px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        #monitor-img { width: 100%; height: auto; display: none; }
+        #status { color: #aaa; font-size: 14px; margin-top: 10px; }
     </style>
 </head>
 <body>
     <h1>🌐 云端监控查看中心</h1>
     
-    <div class="control-panel">
-        <input type="text" id="target-id" placeholder="输入 Mate 20 的连接 ID">
-        <button id="connect-btn">连接监控</button>
+    <div class="box">
+        <input type="text" id="room-id" value="mycam888" placeholder="输入与发射端一致的监控暗号">
+        <button id="connect-btn">一键连接外网监控</button>
+        <div id="status">未连接</div>
     </div>
 
-    <video id="remote-video" autoplay playsinline></video>
+    <div class="monitor-box">
+        <div id="placeholder-text" style="color: #555;">暂无信号</div>
+        <img id="monitor-img" src="" alt="实时监控画面">
+    </div>
 
     <script>
-        const remoteVideo = document.getElementById('remote-video');
         const connectBtn = document.getElementById('connect-btn');
-        const targetIdInput = document.getElementById('target-id');
-        
-        const peer = new Peer(); // 初始化自身的 P2P 节点
+        const statusDiv = document.getElementById('status');
+        const monitorImg = document.getElementById('monitor-img');
+        const placeholderText = document.getElementById('placeholder-text');
+
+        let client;
 
         connectBtn.onclick = () => {
-            const targetId = targetIdInput.value.trim();
-            if (!targetId) {
-                alert("请输入发射端的 ID！");
-                return;
-            }
+            const topicName = document.getElementById('room-id').value.trim();
+            if (!topicName) return alert("请输入监控暗号！");
 
-            connectBtn.innerText = "正在呼叫...";
-            
-            // 呼叫 Mate 20，因为是接收端，我们不需要传过去自己的摄像头（传 null）
-            const call = peer.call(targetId, null);
-            
-            // 当收到 Mate 20 传过来的视频流时
-            call.on('stream', (remoteStream) => {
-                remoteVideo.srcObject = remoteStream;
+            statusDiv.innerText = "正在接入云端网络...";
+            connectBtn.innerText = "正在连接...";
+
+            // 连接同一个公共云服务器
+            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+
+            client.on('connect', () => {
+                statusDiv.innerText = "🟢 已成功接入云端，正在等待画面传输...";
                 connectBtn.innerText = "已连接";
                 connectBtn.style.background = "#444";
                 connectBtn.style.color = "#aaa";
+
+                // 订阅该暗号的画面通道
+                client.subscribe('pocam/' + topicName);
             });
 
-            call.on('error', (err) => {
-                alert("连接失败: " + err);
-                connectBtn.innerText = "重试";
+            // 收到华为 Mate 20 传过来的画面时
+            client.on('message', (topic, message) => {
+                placeholderText.style.display = "none";
+                monitorImg.style.display = "block";
+                // 直接更新图片 src 渲染画面
+                monitorImg.src = message.toString();
+                statusDiv.innerText = "🔵 正在接收实时高清画面";
+            });
+
+            client.on('error', () => {
+                statusDiv.innerText = "❌ 连接失败，请检查网络";
+                connectBtn.innerText = "重新连接";
             });
         };
     </script>
